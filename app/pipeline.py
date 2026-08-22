@@ -167,14 +167,18 @@ def acquire(analysis: dict, store: EvidenceStore, warnings: List[str]
     """Discover, download and parse the allowed sources for one part."""
     # The brand the wider web associates with this part number. Purely a
     # navigation aid - it decides where to look, never what to write.
-    inferred = infer_brand_tokens(analysis["mpn"], analysis["core_desc"])
-    # Only the strongest token is treated as the brand for domain matching; the
-    # rest stay as search context. One wrong "brand" turns a manuals aggregator
-    # into a tier-1 manufacturer source.
-    names = list(dict.fromkeys(inferred[:1] + analysis["manufacturer_candidates"]))
+    supplied = analysis["supplier_name"]
+    inferred = infer_brand_tokens(analysis["mpn"], analysis["core_desc"], prefer=supplied)
+    # The supplied manufacturer name is evidence too. Ranking it alongside the
+    # inferred token - rather than letting one popular but spurious token decide -
+    # is what stops a part number that reads as a hex colour from resolving to a
+    # colour-reference site.
+    names = list(dict.fromkeys(inferred[:1] + analysis["manufacturer_candidates"]
+                               + inferred[1:2]))
     analysis["inferred_brand_tokens"] = inferred
 
-    domain, why = find_manufacturer_domain(names, analysis["mpn"], analysis["core_desc"])
+    domain, why = find_manufacturer_domain(names, analysis["mpn"],
+                                           analysis["core_desc"], prefer=supplied)
     if not domain:
         warnings.append("manufacturer domain not resolved: " + why)
 

@@ -149,7 +149,8 @@ _PATH_STOP = {
 }
 
 
-def infer_brand_tokens(mpn: str, extra_context: str = "", limit: int = 3) -> List[str]:
+def infer_brand_tokens(mpn: str, extra_context: str = "", limit: int = 3,
+                       prefer: str = "") -> List[str]:
     """Derive the brand from the open web without a brand master file.
 
     A part number is close to unique, and third parties habitually write it as
@@ -164,22 +165,55 @@ def infer_brand_tokens(mpn: str, extra_context: str = "", limit: int = 3) -> Lis
     # them is what separates "frigidaire" from "dishwasher" and "professional",
     # and stops dishwashermanuals.org from passing as the manufacturer's site.
     described = {t for t in norm(extra_context).split() if len(t) > 2}
-    votes: Dict[str, Set[str]] = {}
+    # Path votes and host votes are counted separately and weighted differently.
+    # A real brand shows up inside *other people's* URLs ("/whirlpool-wdts7024rz"),
+    # whereas a retailer's own name only ever appears in its own hostname. Giving
+    # host tokens a quarter vote stops "ktappliance" out-ranking the brand simply
+    # because ktappliance.com happened to rank for the part number.
+    path_votes: Dict[str, Set[str]] = {}
+    host_votes: Dict[str, Set[str]] = {}
+
+    def _tokens_of(text: str, vl: str):
+        for token in re.split(r"[^a-z0-9]+", text.lower()):
+            if (len(token) < 3 or len(token) > 24 or token in _PATH_STOP
+                    or token in described
+                    or token.isdigit() or vl in token or token in vl):
+                continue
+            if token.isalpha():
+                yield token
+
     for v in variants:
         vl = v.lower()
         for url in web_search('"{}" {}'.format(v, clean(extra_context)[:40]).strip(), limit=14):
             host = host_of(url)
-            blob = (urlparse(url).path + " " + host).lower()
-            for token in re.split(r"[^a-z0-9]+", blob):
-                if (len(token) < 3 or len(token) > 24 or token in _PATH_STOP
-                        or token in described
-                        or token.isdigit() or vl in token or token in vl):
-                    continue
-                if not token.isalpha():
-                    continue
-                votes.setdefault(token, set()).add(host)
-    ranked = sorted(votes.items(), key=lambda kv: -len(kv[1]))
-    return [t for t, hosts in ranked if len(hosts) >= 2][:limit]
+            for token in _tokens_of(urlparse(url).path, vl):
+                path_votes.setdefault(token, set()).add(host)
+            for token in _tokens_of(host, vl):
+                host_votes.setdefault(token, set()).add(host)
+
+    votes = {t: hosts for t, hosts in path_votes.items()}
+    for t, hosts in host_votes.items():
+        votes.setdefault(t, set())
+    # Host count alone is not enough. Part numbers collide with other
+    # vocabularies - "42275BK" reads as a hex colour, so colour-reference sites
+    # rank for it and "color" out-votes the real brand. When the caller supplied
+    # a manufacturer name, a token that corroborates it wins outright: two
+    # independent signals agreeing beats one signal counted often.
+    # Split on every non-alphanumeric: `norm` keeps "/", and a supplier string
+    # like "Black & Decker/dewlt" would otherwise yield one token "decker/dewlt"
+    # that matches nothing.
+    hint_tokens = {t for t in re.split(r"[^a-z0-9]+", norm(core_name(prefer)))
+                   if len(t) > 2}
+    scored: List[Tuple[float, str]] = []
+    for token in votes:
+        score = len(path_votes.get(token, ())) + 0.25 * len(host_votes.get(token, ()))
+        if hint_tokens:
+            best = max((fuzz.ratio(token, h) for h in hint_tokens), default=0)
+            if token in hint_tokens or best >= 85:
+                score += 100.0                 # corroborated by the supplied name
+        scored.append((score, token))
+    scored.sort(key=lambda kv: (-kv[0], kv[1]))
+    return [t for s, t in scored if s >= 2.0][:limit]
 
 
 SUPPLIER_ACCOUNT = re.compile(
@@ -192,8 +226,8 @@ def looks_like_supplier_account(name: str) -> bool:
     return bool(SUPPLIER_ACCOUNT.search(clean(name)))
 
 
-def find_manufacturer_domain(names: List[str], mpn: str = "",
-                             context: str = "") -> Tuple[Optional[str], str]:
+def find_manufacturer_domain(names: List[str], mpn: str = "", context: str = "",
+                             prefer: str = "") -> Tuple[Optional[str], str]:
     """Resolve the official domain from the open web. Returns (domain, evidence-note).
 
     The supplier string on an input row is usually a *distributor account*
@@ -207,7 +241,7 @@ def find_manufacturer_domain(names: List[str], mpn: str = "",
     scored: Dict[str, Tuple[float, str]] = {}
 
     # --- brand inferred from the crowd, then matched to a domain -----------
-    inferred = infer_brand_tokens(mpn, context) if mpn else []
+    inferred = infer_brand_tokens(mpn, context, prefer=prefer) if mpn else []
     if inferred:
         names = list(dict.fromkeys(inferred + names))
 
@@ -282,13 +316,15 @@ def find_manufacturer_domain(names: List[str], mpn: str = "",
     # A domain whose registrable name IS the inferred brand outranks anything
     # that merely appeared often. Retailers rank well for a part number; only the
     # manufacturer is named after the brand.
-    if inferred:
+    owner_names = [n for n in (inferred[:1] + ([clean(prefer)] if clean(prefer) else []))
+                   if n and not looks_like_supplier_account(n)]
+    if owner_names:
         owned = {h: v for h, v in scored.items()
-                 if _domain_affinity("https://" + h, inferred[:1]) >= 0.9}
+                 if _domain_affinity("https://" + h, owner_names) >= 0.9}
         if owned:
             best = max(owned.items(), key=lambda kv: kv[1][0])
-            return best[0], "domain matches inferred brand '{}' ({})".format(
-                inferred[0], best[1][1])
+            return best[0], "domain matches brand '{}' ({})".format(
+                owner_names[0], best[1][1])
 
     best = max(scored.items(), key=lambda kv: kv[1][0])
     return best[0], best[1][1]
