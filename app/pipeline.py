@@ -25,8 +25,9 @@ from rapidfuzz import fuzz
 from app.acquire import pdfs
 from app.acquire.discovery import (SourceCandidate, extract_links, find_documents,
                                    find_manufacturer_domain, find_product_pages, host_of,
-                                   infer_brand_tokens, is_banned, is_distributor,
-                                   looks_like_supplier_account, mpn_variants)
+                                   domain_matches, infer_brand_tokens, is_banned,
+                                   is_distributor, looks_like_supplier_account,
+                                   mpn_variants)
 from app.acquire.fetcher import fetch
 from app.config import settings
 from app.delivery import (MAX_ALT_IMAGES, MAX_ATTRIBUTES, MAX_FEATURES, MAX_REF_URLS,
@@ -459,10 +460,17 @@ def derive_identity(analysis: dict, facts: PageFacts, store: EvidenceStore
     if brand:
         record("BRAND_NAME", brand, store.verify(brand, field_name="BRAND_NAME"), "jsonld-brand")
     if "BRAND_NAME" not in out:
+        # An inferred token is only a brand if the site we actually read is named
+        # after it. Without that check a commodity part - a dimensional stud, say -
+        # writes its own product noun into BRAND_NAME: grounded, and nonsense.
         for token in analysis.get("inferred_brand_tokens", [])[:2]:
+            owns_source = domain_matches(facts.url, [token]) or any(
+                domain_matches(e.url, [token]) for e in store.items.values() if e.tier == 1)
+            if not owns_source:
+                continue
             cased, g = find_cased_form(store, token)
             if cased:
-                record("BRAND_NAME", cased, g, "brand-token-confirmed-on-site")
+                record("BRAND_NAME", cased, g, "brand-confirmed-on-its-own-site")
                 break
     mfr = clean(facts.identifiers.get("manufacturer", ""))
     if mfr:

@@ -369,6 +369,11 @@ def onsite_search_urls(domain: str, term: str) -> List[str]:
     ]
 
 
+def domain_matches(url: str, names: Iterable[str], threshold: float = 0.9) -> bool:
+    """Is this URL served by a site named after one of `names`?"""
+    return bool(url) and _domain_affinity(url, [n for n in names if n]) >= threshold
+
+
 def same_brand_site(url: str, domain: Optional[str], names: Iterable[str]) -> bool:
     """whirlpool.ca, shop.whirlpool.com and whirlpool.com are all "their own site".
 
