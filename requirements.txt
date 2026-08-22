@@ -1,0 +1,30 @@
+# --- API service -----------------------------------------------------------
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.9
+pydantic>=2.10
+pydantic-settings>=2.7
+
+# --- acquisition -----------------------------------------------------------
+httpx>=0.28
+requests>=2.32
+brotli>=1.1
+selenium>=4.30
+beautifulsoup4>=4.13
+lxml>=6.0
+lxml_html_clean>=0.4
+trafilatura>=2.2
+
+# --- documents & reference data --------------------------------------------
+pypdf>=5.0
+pymupdf>=1.24
+pandas>=2.2
+openpyxl>=3.1
+
+# --- matching, caching, LLM ------------------------------------------------
+rapidfuzz>=3.14
+diskcache>=5.6
+groq>=1.0
+
+# --- front end (also used by the Streamlit Cloud deployment) ---------------
+streamlit>=1.40
