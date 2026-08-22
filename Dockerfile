@@ -18,10 +18,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-liberation \
         libnss3 \
         libxss1 \
-        libasound2 \
         ca-certificates \
         curl \
-    && rm -rf /var/lib/apt/lists/*
+    # libasound2 was renamed libasound2t64 in newer Debian; try both, and do not
+    # fail the build over an audio library a headless browser never uses.
+    && (apt-get install -y --no-install-recommends libasound2t64 \
+        || apt-get install -y --no-install-recommends libasound2 \
+        || true) \
+    && rm -rf /var/lib/apt/lists/* \
+    && chromium --version && chromedriver --version
 
 ENV CHROME_BINARY=/usr/bin/chromium \
     CHROMEDRIVER_PATH=/usr/bin/chromedriver
