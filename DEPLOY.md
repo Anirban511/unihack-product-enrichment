@@ -298,6 +298,7 @@ Space wakes on the first request and serves it. For a live demo:
 | `Updates were rejected` on `git push hf` | Space has its own initial commit | `git push hf main --force` |
 | Space stuck on **Building** > 20 min | build genuinely is slow first time | check **Logs → Build** for a real error |
 | Build fails on `chromium` | `packages.txt` not picked up | confirm it is at the repo root and was pushed |
+| `push rejected ... contains binary files` | Hugging Face wants binaries in Xet/LFS, not plain git | keep binaries out of the repo (`*.pdf` is gitignored) or `git lfs track` them |
 | UI loads but `/docs` 404s | Gradio started standalone instead of mounted | check **Logs → Container** for `Uvicorn running on` |
 | `/v1/health` shows `browser_available: false` | Chromium failed to launch | **Logs → Container**; confirm the Dockerfile installed `chromium-driver` |
 | Streamlit Cloud UI says "Not reachable" | wrong `API_BASE_URL` | `https://user-space.hf.space` — dashes, `.hf.space`, no trailing slash |

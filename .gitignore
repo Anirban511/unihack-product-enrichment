@@ -25,3 +25,8 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+
+# --- reference docs kept locally -------------------------------------------
+# Hugging Face rejects plain binaries over the git path (they want Xet/LFS),
+# and the app never reads this file - it is the challenge brief.
+*.pdf
