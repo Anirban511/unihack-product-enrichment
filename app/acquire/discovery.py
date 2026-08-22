@@ -125,18 +125,32 @@ def web_search(query: str, limit: int = 12) -> List[str]:
 # ---------------------------------------------------------------------------
 def _domain_affinity(url: str, names: Iterable[str]) -> float:
     h = host_of(url).split(":")[0]
-    stem = re.sub(r"\.(com|net|org|co|io|us|ca|de|uk|eu|in|cn|au|biz|info)(\.[a-z]{2})?$", "", h)
-    stem = stem.replace("-", "").replace(".", "")
+    bare = re.sub(r"\.(com|net|org|co|io|us|ca|de|uk|eu|in|cn|au|biz|info)(\.[a-z]{2})?$", "", h)
+    # Compare against the whole host and against its last label, so a brand's
+    # shop or country subdomain (shop.kichler.com) still reads as its own site.
+    labels = [p for p in bare.split(".") if p]
+    stems = {bare.replace("-", "").replace(".", "")}
+    if labels:
+        stems.add(labels[-1].replace("-", ""))
     best = 0.0
     for n in names:
-        k = core_name(n).replace(" ", "")
-        if not k:
-            continue
-        if k == stem or stem.startswith(k) or k.startswith(stem):
-            best = max(best, 1.0)
-        else:
-            best = max(best, fuzz.ratio(k, stem) / 100.0)
+        for stem in stems:
+            best = max(best, _stem_affinity(core_name(n).replace(" ", ""), stem))
     return best
+
+
+def _stem_affinity(k: str, stem: str) -> float:
+    """How strongly does a name `k` claim a domain stem?"""
+    if not k or not stem:
+        return 0.0
+    if k == stem:
+        return 1.0
+    # A prefix match only means something for a distinctive name. Allowing it on
+    # short tokens makes "stud" match studiodesign.com, and the brand of a
+    # dimensional stud becomes whatever site happened to rank for it.
+    if min(len(k), len(stem)) >= 6 and (stem.startswith(k) or k.startswith(stem)):
+        return 1.0
+    return fuzz.ratio(k, stem) / 100.0
 
 
 _PATH_STOP = {
