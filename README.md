@@ -4,7 +4,6 @@ emoji: 🔧
 colorFrom: blue
 colorTo: gray
 sdk: gradio
-sdk_version: 6.25.0
 app_file: space_app.py
 pinned: false
 short_description: Part number in, source-cited 252-column product record out
