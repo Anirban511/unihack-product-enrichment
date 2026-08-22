@@ -4,17 +4,21 @@ Three things get deployed, in this order. Do them in order — each step needs a
 URL or token from the one before it.
 
 ```
-   GitHub repo  ──push──▶  Hugging Face Space (Docker)   = the API + Chromium
-        │                            │
-        │                            ▼
-        └────────────▶  Streamlit Community Cloud        = the front end
-                        (reads API_BASE_URL from secrets)
+                       Space 1: unihack-api   (SDK: Docker)
+   GitHub repo ─push─▶  FastAPI + Chromium
+   (source of           exposes /v1/enrich, /docs
+    truth)                        ▲
+                                  │ HTTP (API_BASE_URL)
+                       Space 2: unihack-ui    (SDK: Streamlit)
+                        the front end, no scraping logic
 ```
 
-**Why split it:** Streamlit Community Cloud runs one Streamlit process and
-cannot expose REST endpoints, and it has no Chromium. Hugging Face Spaces with
-the Docker SDK can do both, so the scraping stack lives there and the UI just
-draws what the API returns.
+**Why two Spaces:** a Space exposes exactly one port, so one process per Space.
+The API needs the Docker SDK because it needs Chromium — the keyless search
+backends answer plain HTTP with an anti-bot page, and many manufacturer pages
+render their spec panel client-side, so without a real browser the pipeline
+retrieves almost nothing. The UI is a plain Streamlit Space that just draws
+whatever the API returns.
 
 ---
 
@@ -24,8 +28,8 @@ draws what the API returns.
 | --- | --- | --- |
 | GitHub account | <https://github.com/signup> | free |
 | Hugging Face account | <https://huggingface.co/join> | free |
-| Streamlit Cloud account | <https://share.streamlit.io> — sign in *with GitHub* | free |
 | GitHub PAT (token) | created in step 1 | free |
+| Hugging Face write token | created in step 3c | free |
 | Groq API key | <https://console.groq.com/keys> | free tier |
 
 > **Rotate your Groq key first.** The key currently in `.env` has been pasted
@@ -201,58 +205,92 @@ If it says `false`, Chromium did not start — check **Logs → Container**.
 
 ---
 
-## 4. Deploy the front end to Streamlit Community Cloud
+## 4. Deploy the front end — second Hugging Face Space
 
-1. Go to <https://share.streamlit.io> and **Sign in with GitHub**. Authorise it.
-2. **Create app** → **Deploy a public app from GitHub**.
-3. Fill it in:
-   - **Repository:** `YOUR_GH_USERNAME/unihack-product-enrichment`
-   - **Branch:** `main`
-   - **Main file path:** `streamlit_app.py`
-   - **App URL:** pick anything, e.g. `unihack-enrichment`
-4. Click **Advanced settings** *before* deploying:
-   - **Python version:** `3.11`
-   - **Secrets:** paste exactly this, with your own Space URL:
+The UI is a separate Space because a Space exposes only one port.
 
-     ```toml
-     API_BASE_URL = "https://YOUR_HF_USERNAME-unihack-api.hf.space"
-     ```
+### 4a. Create it
 
-5. **Deploy**. First build takes 3–6 minutes.
+1. <https://huggingface.co/new-space>
+2. Fill it in:
+   - **Space name:** `unihack-ui`
+   - **License:** `mit`
+   - **SDK:** **Streamlit**
+   - **Space hardware:** `CPU basic · FREE`
+   - **Visibility:** **Public**
+3. **Create Space**.
 
-When it loads, press **Check connection** in the sidebar. You should see
-*"API reachable"* and the model name. Then enrich `PDSH4816AF`.
+### 4b. Point it at your API
 
----
+**Settings → Variables and secrets → New variable** (a *variable*, not a
+secret — it is only a URL):
 
-## 5. Optional — host the UI on Hugging Face too
+| Name | Value |
+| --- | --- |
+| `API_BASE_URL` | `https://YOUR_HF_USERNAME-unihack-api.hf.space` |
 
-Useful as a backup, or if you would rather keep everything on one platform.
+Use the URL from step 3e. Dashes, not slashes. No trailing slash.
 
-1. <https://huggingface.co/new-space> → name `unihack-ui` → SDK **Streamlit** →
-   CPU basic → Public → **Create Space**.
-2. **Settings → Variables and secrets → New variable**:
+### 4c. Push the three UI files
 
-   | Name | Value |
-   | --- | --- |
-   | `API_BASE_URL` | `https://YOUR_HF_USERNAME-unihack-api.hf.space` |
-
-3. Push the three files in `deploy/hf-ui/`:
+The UI Space gets its own small repo — just the app, not the whole pipeline.
+Run this from anywhere; it clones the empty Space, copies three files in, and
+pushes. Use the **same `hf_...` token** as the password.
 
 ```bash
 cd "c:/Users/ANIRBAN/Downloads/UNIHACK"
-git clone https://huggingface.co/spaces/YOUR_HF_USERNAME/unihack-ui /tmp/unihack-ui
-cp deploy/hf-ui/README.md deploy/hf-ui/app.py deploy/hf-ui/requirements.txt /tmp/unihack-ui/
-cd /tmp/unihack-ui
+
+git clone https://huggingface.co/spaces/YOUR_HF_USERNAME/unihack-ui ../unihack-ui
+cp deploy/hf-ui/README.md      ../unihack-ui/README.md
+cp deploy/hf-ui/app.py         ../unihack-ui/app.py
+cp deploy/hf-ui/requirements.txt ../unihack-ui/requirements.txt
+
+cd ../unihack-ui
 git add .
-git commit -m "Streamlit front end"
+git commit -m "Streamlit front end for the enrichment API"
 git push
 ```
 
-UI lives at `https://YOUR_HF_USERNAME-unihack-ui.hf.space`.
+If `git push` says the remote has commits you do not have:
 
-> `deploy/hf-ui/app.py` is a copy of `streamlit_app.py`. After changing the UI,
-> re-copy it: `cp streamlit_app.py deploy/hf-ui/app.py`.
+```bash
+git pull --rebase --allow-unrelated-histories
+git push
+```
+
+Build takes 2–4 minutes. The UI is then at:
+
+```
+https://YOUR_HF_USERNAME-unihack-ui.hf.space
+```
+
+Open it, press **Check connection** in the sidebar — you want *"API reachable"*
+and `Browser tier: ✅ available`. Then enrich `PDSH4816AF`.
+
+> `deploy/hf-ui/app.py` is a copy of `streamlit_app.py`. After editing the UI,
+> re-copy it before pushing: `cp streamlit_app.py deploy/hf-ui/app.py`.
+
+---
+
+## 5. Optional — Streamlit Community Cloud as a backup
+
+Handy if a Space is slow to wake during the demo. It deploys from GitHub and
+redeploys automatically on every push.
+
+1. <https://share.streamlit.io> → **Sign in with GitHub** → authorise.
+2. **Create app** → **Deploy a public app from GitHub**.
+   - **Repository:** `YOUR_GH_USERNAME/unihack-product-enrichment`
+   - **Branch:** `main`
+   - **Main file path:** `streamlit_app.py`
+3. **Advanced settings** *before* deploying:
+   - **Python version:** `3.11`
+   - **Secrets:**
+     ```toml
+     API_BASE_URL = "https://YOUR_HF_USERNAME-unihack-api.hf.space"
+     ```
+4. **Deploy**.
+
+Both front ends talk to the same API, so they stay in sync automatically.
 
 ---
 
@@ -261,12 +299,20 @@ UI lives at `https://YOUR_HF_USERNAME-unihack-ui.hf.space`.
 ```bash
 git add .
 git commit -m "what changed"
-git push origin main     # GitHub  → Streamlit Cloud redeploys automatically
-git push hf main         # HF Space → rebuilds the Docker image
+git push origin main     # GitHub: source of truth
+git push hf main         # API Space: rebuilds the Docker image (~8 min)
 ```
 
-Streamlit Cloud watches the repo and redeploys on push. The HF Space only
-rebuilds when you push to it.
+For a UI-only change:
+
+```bash
+cp streamlit_app.py deploy/hf-ui/app.py
+git add . && git commit -m "UI tweak" && git push origin main
+cp deploy/hf-ui/app.py ../unihack-ui/app.py
+cd ../unihack-ui && git add . && git commit -m "UI tweak" && git push
+```
+
+Only the UI Space rebuilds — the API keeps running and keeps its warm cache.
 
 ---
 
@@ -276,8 +322,9 @@ Neither free tier stays hot forever, and there is no free host that does.
 
 | Platform | Sleeps after | Wake time |
 | --- | --- | --- |
-| HF Space (free CPU) | 48 h idle | ~30 s cold start |
-| Streamlit Cloud | ~7 days idle | ~30 s, one click |
+| HF Space, API (Docker, free CPU) | 48 h idle | ~30-60 s cold start |
+| HF Space, UI (Streamlit, free CPU) | 48 h idle | ~20 s cold start |
+| Streamlit Cloud (if you add it) | ~7 days idle | ~30 s, one click |
 
 Neither *spins down mid-request* the way Render's free tier does — a sleeping
 Space wakes on the first request and serves it. For a live demo:
@@ -300,10 +347,12 @@ Space wakes on the first request and serves it. For a live demo:
 | `Updates were rejected` on `git push hf` | Space has its own initial commit | `git push hf main --force` |
 | Space stuck on **Building** > 20 min | build genuinely is slow first time | check **Logs → Build** for a real error |
 | `/v1/health` shows `browser_available: false` | Chromium failed to launch | **Logs → Container**; confirm the Dockerfile installed `chromium-driver` |
-| Streamlit: "Not reachable" | wrong `API_BASE_URL` | it is `https://user-space.hf.space` — dashes, `.hf.space` |
+| UI says "Not reachable" | wrong `API_BASE_URL` | `https://user-space.hf.space` — dashes, `.hf.space`, no trailing slash |
+| UI reachable but every request 504s | API Space still waking | open the API `/docs` once, wait for it, retry |
 | Enrichment returns empty everything | Groq key missing or wrong | `/v1/health` → `llm.configured` must be `true` |
 | Request times out in the UI | cold Space + uncached part | run it once, retry; the second call is cached |
-| `ModuleNotFoundError` on Streamlit Cloud | Python version | Advanced settings → Python 3.11 → **Reboot app** |
+| `ModuleNotFoundError` in the UI Space | missing dep | check `deploy/hf-ui/requirements.txt` was pushed |
+| UI Space build fails on `streamlit_app.py` | wrong filename | the UI Space needs the file named **`app.py`** |
 
 ---
 
