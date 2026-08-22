@@ -457,12 +457,6 @@ def find_product_pages(mpn: str, names: List[str], domain: Optional[str],
                 if same_brand_site(u, domain, names):
                     add(u, 1, "web search -> manufacturer site")
 
-    # On-site search routes are a last resort: they cost six fetches and usually
-    # land on a results page rather than the product.
-    if domain and not any(c.tier == 1 and c.score > 2.0 for c in cands.values()):
-        for u in onsite_search_urls(domain, variants[0]):
-            add(u, 1, "on-site search route")
-
     # --- tier 2: reputed distributors, fallback only ---------------------
     if not any(c.tier == 1 and c.score > 2.0 for c in cands.values()):
         for v in variants[:2]:

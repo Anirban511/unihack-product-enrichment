@@ -162,6 +162,32 @@ _DOC_HUB = re.compile(
     r"(manual|document|literature|spec|support|download|resource|brochure|"
     r"guide|instruction|warranty|technical)", re.I)
 
+# A results page echoes the query back, so "the part number appears here" is
+# always true on it. Reject by shape before that test can be fooled.
+_NOT_A_PRODUCT_URL = re.compile(
+    r"(/search\b|/searchresults|/catalogsearch|/find\b|/browse\b|/category|"
+    r"/categories|/collections/?$|/shop/?$|/products/?$|/sections?/|"
+    r"[?&](q|s|k|query|search|searchterm|keyword|kw)=)", re.I)
+
+
+def looks_like_product_page(url: str, facts: PageFacts) -> Tuple[bool, str]:
+    """Is this one product's page, or a list of many / a support hub?
+
+    Matching on the part number alone is not enough: a site's own search results
+    contain it by construction, and so does a retailer's category listing. A real
+    product page carries product-shaped structure - a JSON-LD Product, an
+    identifier, or a spec table.
+    """
+    if _NOT_A_PRODUCT_URL.search(url or ""):
+        return False, "search or listing page, not a product page"
+    if facts.identifiers.get("sku") or facts.identifiers.get("mpn") or facts.jsonld:
+        return True, ""
+    if len(facts.specs) >= 3:
+        return True, ""
+    if facts.images and (facts.features or facts.marketing):
+        return True, ""
+    return False, "no product structure found on the page"
+
 
 def acquire(analysis: dict, store: EvidenceStore, warnings: List[str]
             ) -> Tuple[List[PageFacts], List[dict], Optional[str]]:
@@ -238,6 +264,23 @@ def acquire(analysis: dict, store: EvidenceStore, warnings: List[str]
             record["skipped"] = "part number not present on page"
             sources.append(record)
             continue
+
+        is_product, why_not = looks_like_product_page(res.final_url or cand.url, facts)
+        if not is_product:
+            record["skipped"] = why_not
+            sources.append(record)
+            continue
+
+        # Tier is decided by who actually served the page, not by what we hoped
+        # to find. A retailer that ranks well for a part number is still a
+        # retailer, and must not be recorded as the manufacturer.
+        served_by_brand = domain_matches(res.final_url or cand.url, names)
+        if cand.tier == 1 and not served_by_brand:
+            cand.tier = 2
+            facts.tier = 2
+            record["tier"] = 2
+            record["policy"] = "distributor-fallback"
+            record["reason"] = "third-party site, not the manufacturer's own domain"
 
         pages.append(facts)
         record.update({"spec_pairs": len(facts.specs), "features": len(facts.features),
