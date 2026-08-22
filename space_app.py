@@ -5,9 +5,12 @@ SDK. A Gradio Space, however, runs an arbitrary Python file and installs Debian
 packages from `packages.txt` - which is enough to get Chromium. So the whole
 product runs in one container on one URL:
 
-    https://<user>-<space>.hf.space/          Gradio UI
-    https://<user>-<space>.hf.space/docs      OpenAPI / Swagger
-    https://<user>-<space>.hf.space/v1/...    the REST API, unchanged
+    https://<user>-<space>.hf.space/           Gradio UI
+    https://<user>-<space>.hf.space/api/docs   OpenAPI / Swagger
+    https://<user>-<space>.hf.space/api/v1/... the REST API
+
+Run locally (`python space_app.py`) the API sits at the root instead: /docs and
+/v1/..., because off-platform we own the port and mount the other way round.
 
 Gradio is mounted *into* the FastAPI application rather than the other way
 round, so the API keeps its own routes, status codes and streaming responses,
@@ -257,7 +260,9 @@ is written. Anything that cannot be proven is left **blank**, never guessed.
 `/docs` on this same URL serves the REST API.
 """
 
-with gr.Blocks(title="Unilog Product Enrichment", theme=gr.themes.Soft()) as demo:
+THEME = gr.themes.Soft()
+
+with gr.Blocks(title="Unilog Product Enrichment") as demo:
     gr.Markdown(INTRO)
 
     with gr.Tab("Enrich a part"):
@@ -342,10 +347,29 @@ with gr.Blocks(title="Unilog Product Enrichment", theme=gr.themes.Soft()) as dem
    using the delivery format's own formulas.
 """)
 
-# Gradio mounts into FastAPI, so /v1/* and /docs keep working untouched.
+# Off-platform we own the process, so Gradio mounts into FastAPI and /v1/* and
+# /docs sit at the root exactly as they do in the API-only deployment.
 app = gr.mount_gradio_app(fastapi_app, demo, path="/")
 
+# On a Space the platform owns port 7860 - ZeroGPU's runtime binds it before our
+# code runs - so starting a second server there fails with EADDRINUSE. Use
+# Gradio's own launcher instead, then attach the REST API to the server Gradio
+# already started, which keeps both halves on the one exposed port.
+ON_SPACE = bool(os.environ.get("SPACE_ID") or os.environ.get("SPACE_REPO_NAME"))
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7860)),
-                timeout_keep_alive=120)
+    if ON_SPACE:
+        demo.launch(server_name="0.0.0.0", theme=THEME, prevent_thread_lock=True)
+        try:
+            # Gradio's FastAPI instance. Mounting a sub-application after startup
+            # is fine: the sub-app needs no lifespan of its own.
+            demo.app.mount("/api", fastapi_app)
+            print("REST API mounted at /api  (e.g. /api/v1/enrich, /api/docs)")
+        except Exception as exc:                 # UI must survive an API mount failure
+            print("could not mount the REST API: {}: {}".format(type(exc).__name__, exc))
+        import threading
+        threading.Event().wait()                 # hold the process open for Gradio
+    else:
+        import uvicorn
+        uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7860)),
+                    timeout_keep_alive=120)

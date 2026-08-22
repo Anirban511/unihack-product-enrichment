@@ -38,6 +38,11 @@ def configured_api_url() -> str:
     return os.environ.get("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
+# On a Hugging Face Space the REST API is mounted under /api; running locally it
+# sits at the root. Point API_BASE_URL at whichever applies, including the /api
+# suffix when you are talking to a Space.
+
+
 def api_get(base: str, path: str) -> Optional[dict]:
     try:
         r = requests.get(base + path, timeout=60)
