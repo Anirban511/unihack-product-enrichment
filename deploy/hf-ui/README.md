@@ -22,7 +22,7 @@ Set this in **Settings → Variables and secrets**:
 
 | Name | Value |
 | --- | --- |
-| `API_BASE_URL` | `https://<your-username>-unihack-api.hf.space` |
+| `API_BASE_URL` | `https://Anirban511-unihack-api.hf.space` |
 
 Without it the app defaults to `http://127.0.0.1:8000`, which only works when
 you are running the API on the same machine.

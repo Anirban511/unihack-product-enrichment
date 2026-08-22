@@ -22,6 +22,10 @@ whatever the API returns.
 
 ---
 
+> **Usernames are pre-filled for `Anirban511`.** If your Hugging Face handle is
+> different from your GitHub one, swap `Anirban511` for it in every
+> `huggingface.co` / `.hf.space` URL below.
+
 ## 0. Before you start — three accounts and two tokens
 
 | What | Where | Cost |
@@ -74,18 +78,14 @@ longer accepts your account password over HTTPS, so you need one.
 
 ## 2. Push the code
 
-Run these in the project folder. Replace `YOUR_GH_USERNAME` and paste your PAT
+Run these in the project folder. The remotes are already configured; paste your PAT
 when git asks for a **password** (your username goes in the username prompt).
+
+The repository is already initialised, committed, and pointed at both remotes,
+so this is the only command you need:
 
 ```bash
 cd "c:/Users/ANIRBAN/Downloads/UNIHACK"
-
-git init
-git branch -M main
-git add .
-git commit -m "Unilog product enrichment pipeline: API, UI, deployment"
-
-git remote add origin https://github.com/YOUR_GH_USERNAME/unihack-product-enrichment.git
 git push -u origin main
 ```
 
@@ -168,7 +168,7 @@ commit you pushed to GitHub.
 ```bash
 cd "c:/Users/ANIRBAN/Downloads/UNIHACK"
 
-git remote add hf https://huggingface.co/spaces/YOUR_HF_USERNAME/unihack-api
+git remote add hf https://huggingface.co/spaces/Anirban511/unihack-api
 git push hf main
 ```
 
@@ -189,8 +189,8 @@ Go to your Space page. It shows **Building**. Click **Logs** → **Build** to
 follow along. The first build takes **8–15 minutes** (it compiles Chromium
 dependencies and a large Python stack). When the header turns **Running**:
 
-- API docs: `https://YOUR_HF_USERNAME-unihack-api.hf.space/docs`
-- Health:   `https://YOUR_HF_USERNAME-unihack-api.hf.space/v1/health`
+- API docs: `https://Anirban511-unihack-api.hf.space/docs`
+- Health:   `https://Anirban511-unihack-api.hf.space/v1/health`
 
 Note the URL shape: **dashes, not slashes**, and it is `.hf.space`, not
 `huggingface.co`.
@@ -227,7 +227,7 @@ secret — it is only a URL):
 
 | Name | Value |
 | --- | --- |
-| `API_BASE_URL` | `https://YOUR_HF_USERNAME-unihack-api.hf.space` |
+| `API_BASE_URL` | `https://Anirban511-unihack-api.hf.space` |
 
 Use the URL from step 3e. Dashes, not slashes. No trailing slash.
 
@@ -240,7 +240,7 @@ pushes. Use the **same `hf_...` token** as the password.
 ```bash
 cd "c:/Users/ANIRBAN/Downloads/UNIHACK"
 
-git clone https://huggingface.co/spaces/YOUR_HF_USERNAME/unihack-ui ../unihack-ui
+git clone https://huggingface.co/spaces/Anirban511/unihack-ui ../unihack-ui
 cp deploy/hf-ui/README.md      ../unihack-ui/README.md
 cp deploy/hf-ui/app.py         ../unihack-ui/app.py
 cp deploy/hf-ui/requirements.txt ../unihack-ui/requirements.txt
@@ -261,7 +261,7 @@ git push
 Build takes 2–4 minutes. The UI is then at:
 
 ```
-https://YOUR_HF_USERNAME-unihack-ui.hf.space
+https://Anirban511-unihack-ui.hf.space
 ```
 
 Open it, press **Check connection** in the sidebar — you want *"API reachable"*
@@ -279,14 +279,14 @@ redeploys automatically on every push.
 
 1. <https://share.streamlit.io> → **Sign in with GitHub** → authorise.
 2. **Create app** → **Deploy a public app from GitHub**.
-   - **Repository:** `YOUR_GH_USERNAME/unihack-product-enrichment`
+   - **Repository:** `Anirban511/unihack-product-enrichment`
    - **Branch:** `main`
    - **Main file path:** `streamlit_app.py`
 3. **Advanced settings** *before* deploying:
    - **Python version:** `3.11`
    - **Secrets:**
      ```toml
-     API_BASE_URL = "https://YOUR_HF_USERNAME-unihack-api.hf.space"
+     API_BASE_URL = "https://Anirban511-unihack-api.hf.space"
      ```
 4. **Deploy**.
 
