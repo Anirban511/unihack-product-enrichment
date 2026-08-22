@@ -26,5 +26,8 @@ rapidfuzz>=3.14
 diskcache>=5.6
 groq>=1.0
 
-# --- front end (also used by the Streamlit Cloud deployment) ---------------
+# --- front ends ------------------------------------------------------------
+# gradio: the Hugging Face Space UI, mounted into the same FastAPI app
+# streamlit: local use and the optional Streamlit Cloud deployment
+gradio>=4.44
 streamlit>=1.40

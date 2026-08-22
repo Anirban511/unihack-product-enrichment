@@ -133,6 +133,26 @@ def _http_fetch(url: str) -> FetchResult:
 # ---------------------------------------------------------------------------
 # Tier 2 - headless browser (Selenium). One driver, reused, lazily started.
 # ---------------------------------------------------------------------------
+# Where Debian/Ubuntu images put Chromium once `packages.txt` has installed it.
+# Probing beats configuration: the same code then runs unchanged on a laptop, a
+# Docker Space and a Gradio Space, none of which agree on the path.
+_CHROME_CANDIDATES = ("/usr/bin/chromium", "/usr/bin/chromium-browser",
+                      "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable")
+_DRIVER_CANDIDATES = ("/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver",
+                      "/usr/lib/chromium-browser/chromedriver",
+                      "/usr/local/bin/chromedriver")
+
+
+def _first_existing(configured: str, candidates) -> str:
+    import os
+    if configured and os.path.exists(configured):
+        return configured
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return ""
+
+
 class _Browser:
     _lock = threading.Lock()
     _driver = None
@@ -158,13 +178,15 @@ class _Browser:
                 opts.add_argument("--user-agent=" + settings.user_agent)
                 opts.set_capability("pageLoadStrategy", "eager")
                 opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-                if settings.chrome_binary:
-                    opts.binary_location = settings.chrome_binary
-                if settings.chromedriver_path:
+                binary = _first_existing(settings.chrome_binary, _CHROME_CANDIDATES)
+                driver_path = _first_existing(settings.chromedriver_path, _DRIVER_CANDIDATES)
+                if binary:
+                    opts.binary_location = binary
+                if driver_path:
                     from selenium.webdriver.chrome.service import Service
-                    d = webdriver.Chrome(options=opts,
-                                         service=Service(settings.chromedriver_path))
+                    d = webdriver.Chrome(options=opts, service=Service(driver_path))
                 else:
+                    # Local dev: let Selenium Manager find the installed Chrome.
                     d = webdriver.Chrome(options=opts)
                 d.set_page_load_timeout(settings.selenium_page_timeout)
                 cls._driver = d

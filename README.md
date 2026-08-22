@@ -1,10 +1,11 @@
 ---
-title: Unilog Enrichment API
+title: Unilog Product Enrichment
 emoji: 🔧
 colorFrom: blue
 colorTo: gray
-sdk: docker
-app_port: 7860
+sdk: gradio
+sdk_version: 6.25.0
+app_file: space_app.py
 pinned: false
 short_description: Part number in, source-cited 252-column product record out
 ---
@@ -16,9 +17,17 @@ record out, in the client's 252-column delivery format.
 
 ```bash
 pip install -r requirements.txt
-uvicorn app.main:app --reload          # http://127.0.0.1:8000/docs
+
+python space_app.py                    # UI + API together on :7860  (what deploys)
+uvicorn app.main:app --reload          # API only, :8000/docs
+streamlit run streamlit_app.py         # standalone UI, talks to the API over HTTP
 python -m scripts.evaluate             # field-level accuracy vs the labelled rows
 ```
+
+Deployed as a single Hugging Face **Gradio** Space: `space_app.py` mounts the
+Gradio UI into the FastAPI application, so one free Space serves the UI at `/`
+and the REST API at `/v1/*` and `/docs`. Chromium arrives via `packages.txt`.
+See [DEPLOY.md](DEPLOY.md).
 
 `GROQ_API_KEY` lives in `.env`. Chrome must be installed for the browser tier
 (the pipeline degrades to HTTP-only if it is not, and says so in `/v1/health`).
