@@ -133,6 +133,12 @@ git commit -m "Remove .env from tracking"
    - **Visibility:** **Public**
 4. **Create Space**. Ignore the git instructions it shows you.
 
+> **Pick CPU, not ZeroGPU.** This pipeline never touches a GPU — it fetches
+> pages, drives a headless browser and calls a *remote* LLM. A ZeroGPU Space
+> refuses to start without a `@spaces.GPU` entry point; `space_app.py` registers
+> a dummy one so it will boot anyway, but CPU basic is the correct hardware and
+> avoids ZeroGPU's queueing entirely.
+
 > **Docker is not needed.** If the Docker SDK is greyed out or asks for
 > billing, that is fine — Gradio does everything here, including Chromium via
 > `packages.txt`.
@@ -297,6 +303,7 @@ Space wakes on the first request and serves it. For a live demo:
 | `remote: Repository not found` | typo in username/repo, or PAT lacks `repo` scope | recheck both |
 | `Updates were rejected` on `git push hf` | Space has its own initial commit | `git push hf main --force` |
 | Space stuck on **Building** > 20 min | build genuinely is slow first time | check **Logs → Build** for a real error |
+| `RUNTIME_ERROR: No @spaces.GPU function detected` | Space is on ZeroGPU hardware | prefer **CPU basic**; `space_app.py` also registers a dummy GPU entry point so ZeroGPU will start |
 | Build fails on `chromium` | `packages.txt` not picked up | confirm it is at the repo root and was pushed |
 | `push rejected ... contains binary files` | Hugging Face wants binaries in Xet/LFS, not plain git | keep binaries out of the repo (`*.pdf` is gitignored) or `git lfs track` them |
 | UI loads but `/docs` 404s | Gradio started standalone instead of mounted | check **Logs → Container** for `Uvicorn running on` |
