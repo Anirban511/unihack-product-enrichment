@@ -22,9 +22,9 @@ whatever the API returns.
 
 ---
 
-> **Usernames are pre-filled for `Anirban511`.** If your Hugging Face handle is
-> different from your GitHub one, swap `Anirban511` for it in every
-> `huggingface.co` / `.hf.space` URL below.
+> **URLs are pre-filled.** GitHub is `Anirban511`; Hugging Face is
+> `Excalibur51`. The two handles differ, so copy the commands as written rather
+> than substituting one for the other.
 
 ## 0. Before you start — three accounts and two tokens
 
@@ -168,7 +168,7 @@ commit you pushed to GitHub.
 ```bash
 cd "c:/Users/ANIRBAN/Downloads/UNIHACK"
 
-git remote add hf https://huggingface.co/spaces/Anirban511/unihack-api
+# already configured locally as the "hf" remote
 git push hf main
 ```
 
@@ -189,8 +189,8 @@ Go to your Space page. It shows **Building**. Click **Logs** → **Build** to
 follow along. The first build takes **8–15 minutes** (it compiles Chromium
 dependencies and a large Python stack). When the header turns **Running**:
 
-- API docs: `https://Anirban511-unihack-api.hf.space/docs`
-- Health:   `https://Anirban511-unihack-api.hf.space/v1/health`
+- API docs: `https://Excalibur51-unihack-api.hf.space/docs`
+- Health:   `https://Excalibur51-unihack-api.hf.space/v1/health`
 
 Note the URL shape: **dashes, not slashes**, and it is `.hf.space`, not
 `huggingface.co`.
@@ -227,7 +227,7 @@ secret — it is only a URL):
 
 | Name | Value |
 | --- | --- |
-| `API_BASE_URL` | `https://Anirban511-unihack-api.hf.space` |
+| `API_BASE_URL` | `https://Excalibur51-unihack-api.hf.space` |
 
 Use the URL from step 3e. Dashes, not slashes. No trailing slash.
 
@@ -240,7 +240,7 @@ pushes. Use the **same `hf_...` token** as the password.
 ```bash
 cd "c:/Users/ANIRBAN/Downloads/UNIHACK"
 
-git clone https://huggingface.co/spaces/Anirban511/unihack-ui ../unihack-ui
+git clone https://huggingface.co/spaces/Excalibur51/unihack-ui ../unihack-ui
 cp deploy/hf-ui/README.md      ../unihack-ui/README.md
 cp deploy/hf-ui/app.py         ../unihack-ui/app.py
 cp deploy/hf-ui/requirements.txt ../unihack-ui/requirements.txt
@@ -261,7 +261,7 @@ git push
 Build takes 2–4 minutes. The UI is then at:
 
 ```
-https://Anirban511-unihack-ui.hf.space
+https://Excalibur51-unihack-ui.hf.space
 ```
 
 Open it, press **Check connection** in the sidebar — you want *"API reachable"*
@@ -286,7 +286,7 @@ redeploys automatically on every push.
    - **Python version:** `3.11`
    - **Secrets:**
      ```toml
-     API_BASE_URL = "https://Anirban511-unihack-api.hf.space"
+     API_BASE_URL = "https://Excalibur51-unihack-api.hf.space"
      ```
 4. **Deploy**.
 
