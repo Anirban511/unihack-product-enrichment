@@ -364,6 +364,12 @@ if __name__ == "__main__":
             # Gradio's FastAPI instance. Mounting a sub-application after startup
             # is fine: the sub-app needs no lifespan of its own.
             demo.app.mount("/api", fastapi_app)
+            # Starlette matches routes in registration order and Gradio has
+            # already registered a catch-all "/{path:path}" for the SPA, which
+            # would swallow /api/* and answer it with the UI shell. Move the
+            # mount to the front so it is matched first.
+            routes = demo.app.router.routes
+            routes.insert(0, routes.pop())
             print("REST API mounted at /api  (e.g. /api/v1/enrich, /api/docs)")
         except Exception as exc:                 # UI must survive an API mount failure
             print("could not mount the REST API: {}: {}".format(type(exc).__name__, exc))
