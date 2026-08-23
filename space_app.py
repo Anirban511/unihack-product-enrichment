@@ -42,9 +42,17 @@ try:                                              # pragma: no cover - platform 
         return "ok"
 
     ZEROGPU = True
-except Exception:
+except Exception as _exc:
     gpu_probe = None
     ZEROGPU = False
+    # Silence here is expensive: on ZeroGPU hardware a missing `spaces` import
+    # means no GPU entry point is registered, and the Space dies at startup with
+    # "No @spaces.GPU function detected" - a message that points at the decorator
+    # rather than at the import that never ran. Say so in the logs.
+    if os.environ.get("SPACE_ID"):
+        print("WARNING: could not import `spaces` ({}). If this Space is on "
+              "ZeroGPU hardware it will fail to start; add `spaces` to "
+              "requirements.txt or switch the Space to CPU.".format(_exc))
 
 
 DESCRIPTION_FIELDS = [

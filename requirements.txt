@@ -26,6 +26,14 @@ rapidfuzz>=3.14
 diskcache>=5.6
 groq>=1.0
 
+# --- Hugging Face ZeroGPU --------------------------------------------------
+# A ZeroGPU Space refuses to start unless it can detect a @spaces.GPU entry
+# point. That detection happens at runtime, so the import must actually succeed;
+# relying on the image to preinstall it left space_app.py silently falling into
+# its except branch and registering nothing. Harmless on CPU, where the
+# decorator is a pass-through.
+spaces>=0.30
+
 # --- front ends ------------------------------------------------------------
 # gradio: the Hugging Face Space UI, mounted into the same FastAPI app
 # streamlit: local use and the optional Streamlit Cloud deployment
