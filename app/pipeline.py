@@ -33,7 +33,7 @@ from app.config import settings
 from app.delivery import (MAX_ALT_IMAGES, MAX_ATTRIBUTES, MAX_FEATURES, MAX_REF_URLS,
                           asset_filename, blank_row, set_attributes, set_series)
 from app.describe import Attr, DescriptionInputs, build_all, compliance
-from app.evidence import EvidenceStore, Grounding
+from app.evidence import EvidenceStore, Grounding, Rejection
 from app.extract.llm import LlmBudget
 from app.extract.parse import PageFacts, merge_facts, parse_html
 from app.extract.select import (choose_classpath, choose_primary_image, choose_product_name,
@@ -167,19 +167,50 @@ _DOC_HUB = re.compile(
 _NOT_A_PRODUCT_URL = re.compile(
     r"(/search\b|/searchresults|/catalogsearch|/find\b|/browse\b|/category|"
     r"/categories|/collections/?$|/shop/?$|/products/?$|/sections?/|"
-    r"[?&](q|s|k|query|search|searchterm|keyword|kw)=)", re.I)
+    r"/explore\b|/all/?($|\?)|/plp\b|/shop-all|/product-finder|/lineup|/range/|"
+    r"[?&](q|s|k|query|search|searchterm|keyword|kw)=|"
+    r"[?&](filters?|facets?|refine|sort|per_page|view|page|cat|category)=)", re.I)
 
 
-def looks_like_product_page(url: str, facts: PageFacts) -> Tuple[bool, str]:
-    """Is this one product's page, or a list of many / a support hub?
+# Menu chrome that shows up in retailer breadcrumbs.
+_NAV_LABEL = re.compile(
+    r"(shop(\s+(here|now|all|by\s+\w+))?|home|explore|all products?|products?|"
+    r"catalog|browse|menu|store|our (?:products?|range)|new arrivals|deals|"
+    r"clearance|sale|brands?|view all|see all|back)", re.I)
 
-    Matching on the part number alone is not enough: a site's own search results
-    contain it by construction, and so does a retailer's category listing. A real
-    product page carries product-shaped structure - a JSON-LD Product, an
-    identifier, or a spec table.
+
+def looks_like_product_page(url: str, facts: PageFacts,
+                            variants: Sequence[str] = ()) -> Tuple[bool, str]:
+    """Is this THIS product's page, or a list of many / a support hub?
+
+    Three independent tests, all of which must pass:
+
+      1. the URL must not have the shape of a search or faceted listing - a
+         results page echoes the query back, so "the part number appears here"
+         is true on it by construction;
+      2. the page must be *about this part* - the part number has to appear in
+         the URL, in structured data, or in the title, not merely somewhere in
+         the body where a "related products" strip would put it;
+      3. the page must carry product-shaped structure.
+
+    Test 2 is what separates a real product page from a category listing that
+    happens to contain the part: diablotools.com/explore/all/?filters=... lists
+    every sander they make, and mining it yields the category's marketing copy
+    rather than the product's.
     """
-    if _NOT_A_PRODUCT_URL.search(url or ""):
-        return False, "search or listing page, not a product page"
+    url = url or ""
+    if _NOT_A_PRODUCT_URL.search(url):
+        return False, "search or faceted listing page, not a product page"
+
+    if variants:
+        path = norm(urlparse(url).path)
+        ident = norm(" ".join([facts.identifiers.get("sku", ""),
+                               facts.identifiers.get("mpn", ""),
+                               facts.identifiers.get("model", ""),
+                               facts.title]))
+        if not any(norm(v) in path or norm(v) in ident for v in variants if v):
+            return False, "page is not specific to this part number"
+
     if facts.identifiers.get("sku") or facts.identifiers.get("mpn") or facts.jsonld:
         return True, ""
     if len(facts.specs) >= 3:
@@ -265,7 +296,8 @@ def acquire(analysis: dict, store: EvidenceStore, warnings: List[str]
             sources.append(record)
             continue
 
-        is_product, why_not = looks_like_product_page(res.final_url or cand.url, facts)
+        is_product, why_not = looks_like_product_page(res.final_url or cand.url, facts,
+                                                      analysis["mpn_variants"])
         if not is_product:
             record["skipped"] = why_not
             sources.append(record)
@@ -340,10 +372,17 @@ def classify(analysis: dict, facts: PageFacts, budget: LlmBudget,
     # Nothing in the loaded taxonomy is close - propose the manufacturer's own
     # breadcrumb as a new leaf rather than forcing a wrong category.
     if not candidates and facts.breadcrumbs:
-        # The final crumb is usually the product itself, not a category.
+        # The final crumb is usually the product itself, not a category, and a
+        # retailer's breadcrumb often opens with a navigation label. "Shop
+        # Here>Sanding Belts" is a menu, not a taxonomy, so nav labels are
+        # dropped and a proposal made only of them is discarded entirely.
         crumbs = [c for c in facts.breadcrumbs
-                  if not any(norm(v) in norm(c) for v in analysis["mpn_variants"])]
-        crumbs = crumbs or facts.breadcrumbs
+                  if not any(norm(v) in norm(c) for v in analysis["mpn_variants"])
+                  and not _NAV_LABEL.fullmatch(clean(c))]
+        if not crumbs:
+            warnings.append("no classpath: the page's breadcrumb is site navigation, "
+                            "not a product taxonomy")
+            return "", 0.0, "breadcrumb-rejected"
         proposed = ">".join(crumbs[-3:])
         TAXONOMY.register_leaf(proposed)
         warnings.append("classpath proposed from manufacturer breadcrumb "
@@ -525,6 +564,18 @@ def derive_identity(analysis: dict, facts: PageFacts, store: EvidenceStore
             if g.ok:
                 record("MANUFACTURER_NAME", cand, g, "supplier-name-confirmed-on-site")
                 break
+    if "MANUFACTURER_NAME" not in out:
+        # The supplied name is provided data, not a guess, so it may be written
+        # even when the manufacturer's own pages never spell it out - which is
+        # common, because a maker's site brands itself ("Diablo") rather than
+        # naming its legal entity ("Freud Inc"). It is withheld only when it
+        # names a distributor account, which is not a manufacturer at all.
+        supplied = clean(analysis["supplier_name"])
+        if supplied and not looks_like_supplier_account(supplied):
+            out["MANUFACTURER_NAME"] = supplied
+            prov.append(FieldProvenance(
+                field="MANUFACTURER_NAME", value=supplied, source_url="(supplied on the input row)",
+                method="from-input", confidence=0.6, tier=0))
 
     mpn = clean(facts.identifiers.get("mpn") or facts.identifiers.get("sku") or "")
     for cand in ([mpn] if mpn else []) + analysis["mpn_variants"]:
@@ -714,9 +765,21 @@ def enrich(item: EnrichmentInput) -> EnrichmentResult:
         if len(features) >= MAX_FEATURES:
             break
 
+    # Category pages advertise a range, not an item. Copy that never names the
+    # product is the "fluent description of invented values" the brief penalises,
+    # even though the string itself was scraped verbatim.
+    _CATEGORY_COPY = re.compile(
+        r"(all products|our (?:full )?(?:range|products|line-?up)|explore (?:our|the)|"
+        r"shop (?:our|all)|browse (?:our|the)|best in the world|discover (?:our|the))", re.I)
+
     marketing = ""
     for text, ev_id in sorted(facts.marketing, key=lambda t: -len(t[0])):
         if not (60 <= len(text) <= 1200):
+            continue
+        if _CATEGORY_COPY.search(text):
+            store.rejections.append(Rejection(
+                field="MARKETING_DESCRIPTION", value=text[:120],
+                reason="category-level copy, not about this product"))
             continue
         g = store.verify(text, prefer=[ev_id], field_name="MARKETING_DESCRIPTION")
         if g.ok:

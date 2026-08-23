@@ -170,7 +170,7 @@ def _source_lookup(result) -> Dict[str, str]:
 def _write_files(row: Dict[str, str], result, part: str) -> Tuple[str, str]:
     stem = (part or "record").replace("/", "_").replace("\\", "_")
     csv_path = os.path.join(OUT_DIR, "{}.csv".format(stem))
-    with open(csv_path, "w", encoding="utf-8-sig", newline="") as fh:
+    with open(csv_path, "w", encoding="utf-8", newline="") as fh:
         fh.write(to_csv([row]))
     json_path = os.path.join(OUT_DIR, "{}.json".format(stem))
     with open(json_path, "w", encoding="utf-8") as fh:
@@ -209,9 +209,21 @@ def run_single(manufacturer: str, part_number: str, progress=gr.Progress()):
             csv_path, json_path)
 
 
+def _row_status(result) -> str:
+    """One plain-language verdict per row, so a failure is never silent."""
+    tier = result.metrics.get("source_tier")
+    if not tier:
+        return "NOT FOUND - no manufacturer page located"
+    if tier == 2:
+        return "REVIEW - third-party source, not the manufacturer"
+    if result.needs_human_review:
+        return "REVIEW - incomplete data"
+    return "OK"
+
+
 def run_batch(file_obj, limit: int, progress=gr.Progress()):
     if file_obj is None:
-        return pd.DataFrame([{"Status": "Upload a CSV first."}]), None
+        return pd.DataFrame([{"Status": "Upload a CSV first."}]), None, None
 
     frame = pd.read_csv(file_obj.name, dtype=str, keep_default_na=False)
     cols = {c.strip().lower(): c for c in frame.columns}
@@ -226,13 +238,15 @@ def run_batch(file_obj, limit: int, progress=gr.Progress()):
                     "manufacturer part number", "manufacturer_part_number")
     maker_col = pick("manufacturer name", "manufacturer_name", "manufacturer",
                      "part_manuf", "brand")
+    desc_col = pick("part_desc", "description", "part description", "desc")
+    e1_col, ul_col, dib_col = pick("e1_brand"), pick("unilog_brand"), pick("dib_brand")
     if not part_col:
         return pd.DataFrame([{"Status": "No part-number column found. Expected one of: "
                               "Part Number, Mfg_Part_Num, MPN. Found: "
-                              + ", ".join(list(frame.columns)[:8])}]), None
+                              + ", ".join(list(frame.columns)[:8])}]), None, None
 
     window = frame.head(int(limit))
-    rows, summary = [], []
+    rows, summary, qa = [], [], []
     for n, (_i, r) in enumerate(window.iterrows(), start=1):
         part = clean(r.get(part_col, ""))
         maker = clean(r.get(maker_col, "")) if maker_col else ""
@@ -240,7 +254,15 @@ def run_batch(file_obj, limit: int, progress=gr.Progress()):
         if not part:
             continue
         try:
-            res = enrich(EnrichmentInput(Mfg_Part_Num=part, Part_Manuf=maker))
+            # Pass through whatever the file supplies. Dropping the description
+            # blanked Part_Desc in the delivery row and threw away useful search
+            # context; the pipeline decides what to trust, not the loader.
+            res = enrich(EnrichmentInput(
+                Mfg_Part_Num=part, Part_Manuf=maker,
+                Part_Desc=clean(r.get(desc_col, "")) if desc_col else "",
+                E1_Brand=clean(r.get(e1_col, "")) if e1_col else "",
+                Unilog_Brand=clean(r.get(ul_col, "")) if ul_col else "",
+                DIB_Brand=clean(r.get(dib_col, "")) if dib_col else ""))
             rows.append(res.delivery_row)
             d = res.delivery_row
             summary.append({
@@ -251,20 +273,34 @@ def run_batch(file_obj, limit: int, progress=gr.Progress()):
                 "Attributes": sum(1 for i in range(1, 51)
                                   if clean(d.get("ATTRIBUTE_VALUE {}".format(i), ""))),
                 "Confidence": round(res.confidence, 2),
-                "Review": "yes" if res.needs_human_review else "",
+                "Status": _row_status(res),
             })
+            qa.append({"Part number": part, "Status": _row_status(res),
+                       "Confidence": round(res.confidence, 2),
+                       "Source tier": res.metrics.get("source_tier") or "none",
+                       "Source URL": res.delivery_row.get("MFR URL", ""),
+                       "Attributes": summary[-1]["Attributes"],
+                       "Warnings": " | ".join(res.warnings)})
         except Exception as exc:
             summary.append({"Part number": part, "Brand": "", "Product name": "",
-                            "Category": "failed: {}".format(type(exc).__name__),
-                            "Attributes": 0, "Confidence": 0.0, "Review": "yes"})
+                            "Category": "", "Attributes": 0, "Confidence": 0.0,
+                            "Status": "ERROR: {}".format(type(exc).__name__)})
+            qa.append({"Part number": part, "Status": "ERROR", "Confidence": 0.0,
+                       "Source tier": "none", "Source URL": "", "Attributes": 0,
+                       "Warnings": str(exc)[:200]})
+
+    qa_path = os.path.join(OUT_DIR, "enrichment_report.csv")
+    pd.DataFrame(qa).to_csv(qa_path, index=False, encoding="utf-8")
 
     if not rows:
-        return pd.DataFrame(summary or [{"Status": "Nothing could be enriched."}]), None
+        return pd.DataFrame(summary or [{"Status": "Nothing could be enriched."}]), None, qa_path
 
     path = os.path.join(OUT_DIR, "enriched_products.csv")
-    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+    # Plain UTF-8, no BOM: the byte-order mark becomes part of the first header
+    # name for a strict validator, which then reports a 252-column mismatch.
+    with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(to_csv(rows))
-    return pd.DataFrame(summary), path
+    return pd.DataFrame(summary), path, qa_path
 
 
 # ---------------------------------------------------------------------------
@@ -329,8 +365,11 @@ with gr.Blocks(title="Product Enrichment", css=CSS) as demo:
         in_limit = gr.Number(label="Products to process", value=5, precision=0)
         go_batch = gr.Button("Enrich all", variant="primary")
         out_batch = gr.Dataframe(wrap=True, show_label=False)
-        dl_batch = gr.File(label="Download enriched products (CSV)")
-        go_batch.click(run_batch, [in_file, in_limit], [out_batch, dl_batch])
+        with gr.Row():
+            dl_batch = gr.File(label="Enriched products (CSV)")
+            dl_report = gr.File(label="Enrichment report (what worked, what did not)")
+        go_batch.click(run_batch, [in_file, in_limit],
+                       [out_batch, dl_batch, dl_report])
 
         # Wired in so ZeroGPU detects a GPU entry point at startup. Hidden: it is
         # a platform requirement, not a feature.
