@@ -24,10 +24,10 @@ from rapidfuzz import fuzz
 
 from app.acquire import pdfs
 from app.acquire.discovery import (SourceCandidate, extract_links, find_documents,
-                                   find_manufacturer_domain, find_product_pages, host_of,
-                                   domain_matches, infer_brand_tokens, is_banned,
-                                   is_distributor, looks_like_supplier_account,
-                                   mpn_variants)
+                                   find_manufacturer_domain, find_product_pages,
+                                   find_via_site_search, host_of, domain_matches,
+                                   infer_brand_tokens, is_banned, is_distributor,
+                                   looks_like_supplier_account, mpn_variants)
 from app.acquire.fetcher import fetch
 from app.config import settings
 from app.delivery import (MAX_ALT_IMAGES, MAX_ATTRIBUTES, MAX_FEATURES, MAX_REF_URLS,
@@ -241,6 +241,15 @@ def acquire(analysis: dict, store: EvidenceStore, warnings: List[str]
         warnings.append("manufacturer domain not resolved: " + why)
 
     candidates = find_product_pages(analysis["mpn"], names, domain)
+
+    # General web search often has no manufacturer result at all for an
+    # industrial part number - every hit is a distributor - while the maker's
+    # own catalogue search finds the product immediately. Ask it directly and
+    # follow its links out; the results page itself is never used as a source.
+    if domain and not any(c.tier == 1 and c.score > 2.0 for c in candidates):
+        site_hits = find_via_site_search(analysis["mpn"], domain)
+        if site_hits:
+            candidates = site_hits + candidates
 
     # The row's own supplier is not the manufacturer. If discovery has landed on
     # the distributor's web shop, that is a tier-2 fallback source at best - it

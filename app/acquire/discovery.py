@@ -160,6 +160,25 @@ _PATH_STOP = {
     "spec", "specs", "buy", "sale", "price", "new", "the", "and", "for", "with", "inch",
     "built", "in", "series", "model", "part", "parts", "home", "s", "dp", "ref", "search",
     "collections", "pages", "content", "media", "images", "assets", "appliance", "appliances",
+    # two-letter noise that becomes eligible once short tokens are allowed
+    "de", "fr", "es", "it", "nl", "pl", "se", "no", "fi", "dk", "jp", "cn",
+    "br", "mx", "ru", "eu", "gb", "nz", "za", "ie", "at", "ch", "be", "pt",
+    "id", "sku", "qty", "ea", "pc", "pk", "lb", "kg", "mm", "cm", "ft", "oz",
+}
+
+
+# Words that appear in half the supplier names in any industrial catalogue.
+# They identify a trade, not a maker, so they must never corroborate a brand:
+# "Jam Industrial Supply" would otherwise promote allindustrial.com over 3M,
+# because "allindustrial" fuzzy-matches "industrial" at 87%.
+_GENERIC_TRADE_WORDS = {
+    "industrial", "industries", "supply", "supplies", "tool", "tools", "company",
+    "corp", "corporation", "inc", "group", "international", "products", "product",
+    "distribution", "distributors", "distributor", "sales", "service", "services",
+    "equipment", "systems", "solutions", "enterprises", "holdings", "brands",
+    "trading", "wholesale", "hardware", "materials", "manufacturing", "mfg",
+    "cooperative", "dealers", "national", "american", "united", "general",
+    "electric", "electrical", "lighting", "plumbing", "building", "parts",
 }
 
 
@@ -189,11 +208,15 @@ def infer_brand_tokens(mpn: str, extra_context: str = "", limit: int = 3,
 
     def _tokens_of(text: str, vl: str):
         for token in re.split(r"[^a-z0-9]+", text.lower()):
-            if (len(token) < 3 or len(token) > 24 or token in _PATH_STOP
+            if (len(token) < 2 or len(token) > 24 or token in _PATH_STOP
                     or token in described
                     or token.isdigit() or vl in token or token in vl):
                 continue
-            if token.isalpha():
+            # Must contain a letter, but need not be all letters: some of the
+            # most recognisable brands are alphanumeric and short - "3m" failed
+            # both an isalpha() test and a three-character minimum, so it could
+            # never be inferred no matter how many sites wrote "/3m-<part>".
+            if re.search(r"[a-z]", token):
                 yield token
 
     for v in variants:
@@ -217,13 +240,15 @@ def infer_brand_tokens(mpn: str, extra_context: str = "", limit: int = 3,
     # like "Black & Decker/dewlt" would otherwise yield one token "decker/dewlt"
     # that matches nothing.
     hint_tokens = {t for t in re.split(r"[^a-z0-9]+", norm(core_name(prefer)))
-                   if len(t) > 2}
+                   if len(t) > 2 and t not in _GENERIC_TRADE_WORDS}
     scored: List[Tuple[float, str]] = []
     for token in votes:
         score = len(path_votes.get(token, ())) + 0.25 * len(host_votes.get(token, ()))
         if hint_tokens:
-            best = max((fuzz.ratio(token, h) for h in hint_tokens), default=0)
-            if token in hint_tokens or best >= 85:
+            long_enough = len(token) >= 4
+            best = max((fuzz.ratio(token, h) for h in hint_tokens
+                        if long_enough and len(h) >= 4), default=0)
+            if token in hint_tokens or best >= 88:
                 score += 100.0                 # corroborated by the supplied name
         scored.append((score, token))
     scored.sort(key=lambda kv: (-kv[0], kv[1]))
@@ -474,6 +499,58 @@ _DOC_QUERIES = (
     '"{mpn}" {brand} specification sheet pdf',
     '"{mpn}" {brand} manual pdf',
 )
+
+
+_SITE_SEARCH_ROUTES = (
+    "https://{d}/search?q={t}",
+    "https://{d}/search?searchTerm={t}",
+    "https://{d}/catalogsearch/result/?q={t}",
+    "https://{d}/s?q={t}",
+    "https://{d}/en/search?q={t}",
+    "https://{d}/3M/en_US/p/?Ntt={t}",
+)
+
+
+def find_via_site_search(mpn: str, domain: str, limit: int = 3) -> List[SourceCandidate]:
+    """Ask the manufacturer's own site, then follow its results OUT to products.
+
+    General web search frequently does not surface a manufacturer's product page
+    for an industrial part number - every result is a distributor - while the
+    manufacturer's own catalogue search finds it immediately. The results page
+    itself is never used as a source: it is read only to harvest the product
+    links it points at, which are then fetched and gated like any other
+    candidate.
+    """
+    if not domain:
+        return []
+    variants = mpn_variants(mpn)
+    out: Dict[str, SourceCandidate] = {}
+    for term in variants[:2]:
+        for route in _SITE_SEARCH_ROUTES:
+            if len(out) >= limit:
+                break
+            url = route.format(d=domain, t=quote_plus(term))
+            res = fetch(url, allow_browser=True)
+            if not res.ok or not res.html:
+                continue
+            for link in extract_links(res.final_url or url, res.html):
+                if host_of(link) != host_of(url) or is_banned(link):
+                    continue
+                path = urlparse(link).path.lower()
+                looks_product = any(k in path for k in
+                                    ("/p/", "/product", "/item", "/sku", "/d/", "/pd/"))
+                names_part = term.lower() in path
+                if not (looks_product or names_part):
+                    continue
+                if link.rstrip("/") == (res.final_url or url).rstrip("/"):
+                    continue
+                out.setdefault(link, SourceCandidate(
+                    url=link, tier=1,
+                    reason="found via the manufacturer's own catalogue search for " + term,
+                    score=4.0 if names_part else 2.0))
+                if len(out) >= limit:
+                    break
+    return sorted(out.values(), key=lambda c: -c.score)[:limit]
 
 
 def find_documents(mpn: str, names: List[str], domain: Optional[str],
