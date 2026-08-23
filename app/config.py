@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     )
     enable_selenium: bool = True            # JS-rendering fallback tier
     selenium_page_timeout: int = 30
+    # One browser serialises every JS-rendered fetch in the process, which is the
+    # dominant cost at catalogue scale. Each instance costs ~250 MB.
+    browser_pool_size: int = 3
     # Containers ship their own Chromium and driver; Selenium Manager cannot
     # download one when the image has no outbound access at build time, so the
     # paths are configurable and left empty for local runs (auto-detect).

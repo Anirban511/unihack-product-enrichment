@@ -468,12 +468,11 @@ def find_product_pages(mpn: str, names: List[str], domain: Optional[str],
     return ranked[:limit]
 
 
+# Two queries, not five. Each one is a browser-rendered SERP, and document
+# discovery was costing ten of them per row for a marginal third PDF.
 _DOC_QUERIES = (
     '"{mpn}" {brand} specification sheet pdf',
-    '"{mpn}" {brand} product specifications pdf',
-    '"{mpn}" {brand} installation instructions pdf',
-    '"{mpn}" {brand} owners manual pdf',
-    '"{mpn}" {brand} dimension guide pdf',
+    '"{mpn}" {brand} manual pdf',
 )
 
 
@@ -490,7 +489,7 @@ def find_documents(mpn: str, names: List[str], domain: Optional[str],
     """
     brand = clean(names[0]) if names else ""
     out: Dict[str, SourceCandidate] = {}
-    for v in mpn_variants(mpn)[:2]:
+    for v in mpn_variants(mpn)[:1]:
         for tmpl in _DOC_QUERIES:
             q = tmpl.format(mpn=v, brand=brand).strip()
             for u in web_search(q, limit=8):

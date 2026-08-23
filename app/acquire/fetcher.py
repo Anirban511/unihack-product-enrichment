@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+import queue
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 from urllib.parse import urlparse
@@ -154,67 +156,99 @@ def _first_existing(configured: str, candidates) -> str:
 
 
 class _Browser:
+    """A small pool of headless Chrome instances.
+
+    A single driver behind a global lock makes every JS-rendered fetch wait for
+    every other one, and a catalogue row needs roughly two dozen of them. The
+    pool is created lazily, one instance at a time, so a machine that cannot run
+    Chrome at all still degrades to the HTTP tier instead of failing.
+    """
+
     _lock = threading.Lock()
-    _driver = None
+    _idle: "queue.Queue" = queue.Queue()
+    _created = 0
     _dead = False
 
     @classmethod
-    def driver(cls):
+    def _spawn(cls):
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        opts = Options()
+        for flag in ("--headless=new", "--disable-gpu", "--no-sandbox",
+                     "--disable-dev-shm-usage", "--window-size=1440,2400",
+                     "--blink-settings=imagesEnabled=false",
+                     "--disable-blink-features=AutomationControlled",
+                     "--log-level=3"):
+            opts.add_argument(flag)
+        opts.add_argument("--user-agent=" + settings.user_agent)
+        opts.set_capability("pageLoadStrategy", "eager")
+        opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+        binary = _first_existing(settings.chrome_binary, _CHROME_CANDIDATES)
+        driver_path = _first_existing(settings.chromedriver_path, _DRIVER_CANDIDATES)
+        if binary:
+            opts.binary_location = binary
+        if driver_path:
+            from selenium.webdriver.chrome.service import Service
+            d = webdriver.Chrome(options=opts, service=Service(driver_path))
+        else:
+            d = webdriver.Chrome(options=opts)
+        d.set_page_load_timeout(settings.selenium_page_timeout)
+        return d
+
+    @classmethod
+    @contextmanager
+    def lease(cls, timeout: float = 240.0):
+        """Borrow a driver, guaranteeing it goes back even if the fetch throws."""
         if cls._dead or not settings.enable_selenium:
-            return None
-        with cls._lock:
-            if cls._driver is not None:
-                return cls._driver
-            try:
-                from selenium import webdriver
-                from selenium.webdriver.chrome.options import Options
-                opts = Options()
-                for flag in ("--headless=new", "--disable-gpu", "--no-sandbox",
-                             "--disable-dev-shm-usage", "--window-size=1440,2400",
-                             "--blink-settings=imagesEnabled=false",
-                             "--disable-blink-features=AutomationControlled",
-                             "--log-level=3"):
-                    opts.add_argument(flag)
-                opts.add_argument("--user-agent=" + settings.user_agent)
-                opts.set_capability("pageLoadStrategy", "eager")
-                opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-                binary = _first_existing(settings.chrome_binary, _CHROME_CANDIDATES)
-                driver_path = _first_existing(settings.chromedriver_path, _DRIVER_CANDIDATES)
-                if binary:
-                    opts.binary_location = binary
-                if driver_path:
-                    from selenium.webdriver.chrome.service import Service
-                    d = webdriver.Chrome(options=opts, service=Service(driver_path))
-                else:
-                    # Local dev: let Selenium Manager find the installed Chrome.
-                    d = webdriver.Chrome(options=opts)
-                d.set_page_load_timeout(settings.selenium_page_timeout)
-                cls._driver = d
-                return d
-            except Exception:
-                cls._dead = True     # no Chrome on this box - degrade, never crash
-                return None
+            yield None
+            return
+        driver = None
+        try:
+            driver = cls._idle.get_nowait()
+        except queue.Empty:
+            with cls._lock:
+                if cls._created < settings.browser_pool_size and not cls._dead:
+                    try:
+                        driver = cls._spawn()
+                        cls._created += 1
+                    except Exception:
+                        if cls._created == 0:
+                            cls._dead = True     # no Chrome here at all
+                        driver = None
+            if driver is None and not cls._dead:
+                try:
+                    driver = cls._idle.get(timeout=timeout)
+                except queue.Empty:
+                    driver = None
+        try:
+            yield driver
+        finally:
+            if driver is not None:
+                cls._idle.put(driver)
 
     @classmethod
     def quit(cls):
         with cls._lock:
-            if cls._driver is not None:
+            while True:
                 try:
-                    cls._driver.quit()
+                    d = cls._idle.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    d.quit()
                 except Exception:
                     pass
-                cls._driver = None
+            cls._created = 0
 
 
 def _browser_fetch(url: str) -> FetchResult:
     t0 = time.time()
     res = FetchResult(url=url, tier="browser")
-    d = _Browser.driver()
-    if d is None:
-        res.tier, res.error = "failed", "browser tier unavailable"
-        return res
     try:
-        with _Browser._lock:
+        with _Browser.lease() as d:
+            if d is None:
+                res.tier, res.error = "failed", "browser tier unavailable"
+                return res
             d.get(url)
             # Hydration + lazy spec tabs: settle on DOM size rather than a fixed sleep.
             last, stable = -1, 0
@@ -291,4 +325,5 @@ def shutdown() -> None:
 
 def cache_stats() -> dict:
     return {"entries": len(_cache), "volume_bytes": _cache.volume(),
-            "browser_available": settings.enable_selenium and not _Browser._dead}
+            "browser_available": settings.enable_selenium and not _Browser._dead,
+        "browser_pool": settings.browser_pool_size}
